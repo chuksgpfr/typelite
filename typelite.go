@@ -25,7 +25,7 @@ func NewTypeLite(redisUrl, redisPassword, namespace string) *TypeLite {
 		DB:       0,
 	})
 
-	redisClient := storage.NewRedisClient(rdb)
+	redisClient := storage.NewRedisClient(rdb, namespace)
 
 	engineConfig := &EngineConfig{
 		Redis:     redisClient,
@@ -41,7 +41,7 @@ func NewTypeLite(redisUrl, redisPassword, namespace string) *TypeLite {
 
 func (t *TypeLite) CreateCollection(ctx context.Context, s *schema.Collection) error {
 	if s == nil {
-		return errors.New("Please pass a non nil collection")
+		return errors.New("please pass a non nil collection")
 	}
 
 	return t.engine.RegisterCollection(ctx, s)

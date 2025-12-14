@@ -18,12 +18,16 @@ var (
 )
 
 type RedisClient struct {
-	rdb *redis.Client
+	rdb       *redis.Client
+	namespace func(name string) string
 }
 
-func NewRedisClient(rdb *redis.Client) *RedisClient {
+func NewRedisClient(rdb *redis.Client, namespace string) *RedisClient {
 	return &RedisClient{
 		rdb: rdb,
+		namespace: func(name string) string {
+			return fmt.Sprintf("%s:%s", namespace, name)
+		},
 	}
 }
 
@@ -36,14 +40,14 @@ func (r *RedisClient) CreateCollection(ctx context.Context, data *schema.CreateC
 		return fmt.Errorf("%w: pass a header", ErrRedisCollectionHeader)
 	}
 
-	res, err := r.do(ctx, "SADD", "tl:collections", data.Name)
+	res, err := r.do(ctx, "SADD", r.namespace("collections"), data.Name)
 	if err != nil {
 		return fmt.Errorf("%w: please fix error %v", ErrRedisCollection, err)
 	}
 
 	fmt.Println("WER ", res)
 
-	if _, err := r.do(ctx, "ZADD", "tl:collections:by_name", 0, data.Name); err != nil {
+	if _, err := r.do(ctx, "ZADD", r.namespace("collections:by_name"), 0, data.Name); err != nil {
 		return err
 	}
 
@@ -52,7 +56,7 @@ func (r *RedisClient) CreateCollection(ctx context.Context, data *schema.CreateC
 		return err
 	}
 
-	metaKey := "tl:collection:" + data.Name
+	metaKey := r.namespace("collection:" + data.Name)
 	if _, err := r.do(ctx,
 		"HSET", metaKey,
 		"name", data.Name,
@@ -62,7 +66,7 @@ func (r *RedisClient) CreateCollection(ctx context.Context, data *schema.CreateC
 	}
 
 	for _, h := range data.Headers {
-		fieldKey := "tl:collections:field:" + h
+		fieldKey := r.namespace("collections:field:" + h)
 		// SADD tl:collections:field:id "products"
 		if _, err := r.do(ctx, "SADD", fieldKey, data.Name); err != nil {
 			return err
