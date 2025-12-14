@@ -1,0 +1,13 @@
+*.env
+tmp
+.DS_STORE
+*.out
+*.log
+
+.prod
+
+config.dev
+config.prod
+
+.vscode
+.idea
