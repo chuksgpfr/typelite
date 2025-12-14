@@ -1,4 +1,4 @@
-# typelite
+# typelite (Still in Development)
 
 **typelite** is a lean, dependency-light search layer for Go, built on top of **Redis**.
 
