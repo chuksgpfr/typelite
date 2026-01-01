@@ -11,4 +11,7 @@ var (
 	ErrNoCollectionName         = errors.New("typelite: no collection name")
 	ErrNoHeader                 = errors.New("typelite: no header")
 	ErrFailedToCreateCollection = errors.New("typelite: failed to create collection")
+	ErrDocumentKeyAlreadyExist  = errors.New("typelite: the primary key you are trying to index already exist")
+	ErrFailedToIndexDocument    = errors.New("typelite: failed to index document")
+	ErrFailedToIndexTextFields  = errors.New("typelite: failed to index text fields")
 )

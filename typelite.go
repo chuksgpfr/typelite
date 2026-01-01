@@ -3,6 +3,7 @@ package typelite
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/chuksgpfr/typelite/schema"
 	"github.com/chuksgpfr/typelite/storage"
@@ -28,7 +29,7 @@ func NewTypeLite(redisUrl, redisPassword, namespace string) *TypeLite {
 	redisClient := storage.NewRedisClient(rdb, namespace)
 
 	engineConfig := &EngineConfig{
-		Redis:     redisClient,
+		Storage:   redisClient,
 		Namespace: namespace,
 	}
 
@@ -45,6 +46,23 @@ func (t *TypeLite) CreateCollection(ctx context.Context, s *schema.Collection) e
 	}
 
 	return t.engine.RegisterCollection(ctx, s)
+}
+
+func (t *TypeLite) IndexDocument(ctx context.Context, collectionName string, body *schema.IndexDocumentPayload, opts *schema.IndexOptions) error {
+
+	collection := t.engine.collections[collectionName]
+	primaryKey, ok := collection.PrimaryKeyField()
+
+	if !ok {
+		return ErrPrimaryKeyMissing
+	}
+
+	documentKey := fmt.Sprintf("%s:%s:doc:%s", t.engine.cfg.Namespace, collectionName, primaryKey.Name)
+	documentIndexKey := fmt.Sprintf("%s:%s:docix:%s", t.engine.cfg.Namespace, collectionName, primaryKey.Name)
+
+	err := t.engine.IndexDocument(ctx, collectionName, documentKey, documentIndexKey, body, opts)
+
+	return err
 }
 
 // func (c *TypeLite) DropCollection(ctx context.Context, name string) error

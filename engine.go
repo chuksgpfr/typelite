@@ -3,15 +3,17 @@ package typelite
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/chuksgpfr/typelite/logger"
 	"github.com/chuksgpfr/typelite/schema"
 	"github.com/chuksgpfr/typelite/storage"
+	"github.com/chuksgpfr/typelite/tokenizer"
 )
 
 type EngineConfig struct {
-	Redis *storage.RedisClient
+	Storage storage.Storage
 
 	// Namespace prefixes all keys, allowing multiple engines to share a Redis.
 	// Default: "tl"
@@ -96,6 +98,7 @@ type Engine struct {
 
 	mu          sync.RWMutex
 	collections map[string]*schema.Collection
+	getDocKey   func(collectionName, primaryKey string) string
 }
 
 func NewEngine(cfg *EngineConfig) *Engine {
@@ -104,14 +107,17 @@ func NewEngine(cfg *EngineConfig) *Engine {
 	return &Engine{
 		cfg:         cfg,
 		collections: make(map[string]*schema.Collection),
+		getDocKey: func(collectionName, primaryKey string) string {
+			return fmt.Sprintf("%s:%s:docx:%s", cfg.Namespace, collectionName, primaryKey)
+		},
 	}
 }
 
 // RegisterCollection validates and registers a collection schema.
 // Implementations may persist schema metadata to Redis
 func (e *Engine) RegisterCollection(ctx context.Context, c *schema.Collection) error {
-	if e.cfg.Redis == nil {
-		return fmt.Errorf("%w: Redis client is required", ErrInvalidSchema)
+	if e.cfg.Storage == nil {
+		return fmt.Errorf("%w: storage client is required", ErrInvalidSchema)
 	}
 	if err := ValidateCollection(c); err != nil {
 		return err
@@ -131,7 +137,8 @@ func (e *Engine) RegisterCollection(ctx context.Context, c *schema.Collection) e
 
 	e.mu.Lock()
 
-	err = e.cfg.Redis.CreateCollection(ctx, data)
+	err = e.cfg.Storage.CreateCollection(ctx, data)
+	e.collections[data.Name] = c
 	e.mu.Unlock()
 
 	// TODO: persist schema to Redis (optional)
@@ -139,7 +146,8 @@ func (e *Engine) RegisterCollection(ctx context.Context, c *schema.Collection) e
 }
 
 // Collection returns the registered collection schema, if present.
-func (e *Engine) Collection(_ context.Context, name string) (*schema.Collection, bool) {
+func (e *Engine) Collection(ctx context.Context, name string) (*schema.Collection, bool) {
+	_ = ctx
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	c, ok := e.collections[name]
@@ -147,23 +155,93 @@ func (e *Engine) Collection(_ context.Context, name string) (*schema.Collection,
 }
 
 // IndexDoc indexes or upserts a single document into a collection.
-func (e *Engine) IndexDoc(ctx context.Context, collection string, doc map[string]any, opts ...*schema.IndexOptions) error {
-	_ = ctx
-	_ = collection
-	_ = doc
-	_ = opts
-	// TODO: implement in internal/index writer
-	return ErrNotImplemented
+func (e *Engine) IndexDocument(ctx context.Context, collectionName, documentKey, documentIndexKey string, doc *schema.IndexDocumentPayload, opts *schema.IndexOptions) error {
+	e.mu.RLock()
+	collection, ok := e.collections[collectionName]
+	e.mu.RUnlock()
+
+	if !ok {
+		return ErrCollectionNotFound
+	}
+
+	// dockKey := e.getDocKey(c.Name, primaryKey.Name)
+
+	if opts.Mode == schema.InsertOnly {
+		keyExist, err := e.cfg.Storage.CheckDocumentKeyExist(ctx, documentKey)
+		if err != nil {
+			return err
+		}
+
+		if keyExist {
+			// ErrDocumentKeyAlreadyExist
+			return nil
+		}
+	}
+
+	err := e.cfg.Storage.IndexDocument(ctx, documentKey, doc)
+
+	if err != nil {
+		return err
+	}
+
+	err = e.indexDocFields(ctx, documentIndexKey, collection, *doc)
+
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // IndexDocs indexes multiple documents. It should continue indexing even if some docs fail.
-func (e *Engine) IndexDocs(ctx context.Context, collection string, docs []map[string]any, opts ...*schema.IndexOptions) (*schema.BulkResult, error) {
-	_ = ctx
-	_ = collection
-	_ = docs
-	_ = opts
-	// TODO: implement with pipelining / batching
-	return &schema.BulkResult{}, ErrNotImplemented
+// func (e *Engine) IndexDocs(ctx context.Context, collection, documentKey string, docs *schema.IndexDocumentPayload, opts *schema.IndexOptions) (*schema.BulkResult, error) {
+// 	_ = ctx
+// 	_ = collection
+// 	_ = docs
+// 	_ = opts
+
+// 	if opts.Mode == schema.InsertOnly {
+// 		exist, err := e.cfg.Storage.CheckDocumentKeyExist(ctx, documentKey)
+// 		if err != nil {
+// 			return nil, ErrFailedToIndexDocument
+// 		}
+
+// 		if !exist {
+// 			return nil, ErrCollectionNotFound
+// 		}
+// 	}
+
+// 	// store a flat document
+// 	err := e.cfg.Storage.IndexDocument(ctx, documentKey, docs)
+// 	if err != nil {
+// 		return nil, ErrFailedToIndexDocument
+// 	}
+
+// 	err = e.indexDocFields(ctx, collection, *docs)
+// 	// TODO: implement with pipelining / batching
+// 	return &schema.BulkResult{}, ErrNotImplemented
+// }
+
+func (e *Engine) indexDocFields(ctx context.Context, documentIndexKey string, collection *schema.Collection, doc schema.IndexDocumentPayload) error {
+
+	for _, f := range collection.Fields {
+		filedValue, ok := doc[f.Name]
+		if !ok {
+			continue
+		}
+
+		switch f.Type {
+		case schema.Text:
+			if f.Search {
+				s, _ := filedValue.(string)
+				err := e.indexTextFields(ctx, collection, &f, documentIndexKey, s)
+				if err != nil {
+					return ErrFailedToIndexTextFields
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // DeleteDoc deletes a document and removes it from all indexes.
@@ -195,3 +273,30 @@ func (e *Engine) Search(ctx context.Context, req *schema.SearchRequest) (*schema
 // Close releases any resources held by the engine.
 // (Many Redis clients do not require this; keep for symmetry.)
 func (e *Engine) Close() error { return nil }
+
+func (e *Engine) indexTextFields(ctx context.Context, c *schema.Collection, f *schema.Field, documentIndexKey, text string) error {
+	if strings.EqualFold(text, "") {
+		return nil
+	}
+
+	ns := e.cfg.Namespace
+
+	dictionaryKey := fmt.Sprintf("%s:%s:terms", ns, c.Name)
+
+	tokenizedTexts := tokenizer.Tokenize(text)
+
+	pk, ok := c.PrimaryKeyField()
+	if !ok {
+		return ErrPrimaryKeyMissing
+	}
+
+	for _, term := range tokenizedTexts {
+		invertedIndexKey := fmt.Sprintf("%s:%s:ix:%s:t:%s", ns, c.Name, f.Name, term)
+		err := e.cfg.Storage.IndexTextField(ctx, term, c.Name, documentIndexKey, invertedIndexKey, dictionaryKey, pk.Name, f)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/chuksgpfr/typelite"
 	"github.com/chuksgpfr/typelite/schema"
@@ -31,6 +30,19 @@ func main() {
 	}
 
 	err := tle.CreateCollection(ctx, userCollection)
+	if err != nil {
+		panic(err)
+	}
 
-	fmt.Println(err)
+	doc := &schema.IndexDocumentPayload{
+		"id":         "p1",
+		"first_name": "Lord",
+		"last_name":  "Khagan",
+	}
+
+	err = tle.IndexDocument(ctx, userCollection.Name, doc, &schema.IndexOptions{Mode: schema.InsertOnly})
+	if err != nil {
+		panic(err)
+	}
+
 }

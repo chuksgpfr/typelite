@@ -11,3 +11,5 @@ config.prod
 
 .vscode
 .idea
+
+*.txt

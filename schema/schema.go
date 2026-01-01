@@ -25,6 +25,7 @@ type Field struct {
 	Sortable   bool // for numeric/time (and maybe string enum)
 	Optional   bool
 	PrimaryKey bool
+	Weight     int
 }
 
 type Collection struct {
@@ -41,3 +42,6 @@ func (c *Collection) PrimaryKeyField() (*Field, bool) {
 	}
 	return &Field{}, false
 }
+
+type indexDocParam map[string]any
+type IndexDocumentPayload indexDocParam
