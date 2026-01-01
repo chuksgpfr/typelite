@@ -96,8 +96,20 @@ userCollection := &schema.Collection{
 }
 
 err := tle.CreateCollection(ctx, userCollection)
+if err != nil {
+  panic(err)
+}
 
-fmt.Println(err)
+doc := &schema.IndexDocumentPayload{
+  "id":         "p1",
+  "first_name": "Lord",
+  "last_name":  "Khagan",
+}
+
+err = tle.IndexDocument(ctx, userCollection.Name, doc, &schema.IndexOptions{Mode: schema.InsertOnly})
+if err != nil {
+  panic(err)
+}
 ```
 
 
